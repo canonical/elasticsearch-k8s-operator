@@ -1,0 +1,14 @@
+# Copyright 2020 Balbir Thomas
+# Copyright 2020 Justin M Clark
+# See LICENSE file for licensing details.
+name: elasticsearch-operator
+maintainers:
+    - Balbir Thomas <balbir.thomas@canonical.com>
+    - Justin M Clark <justin.clark@canonical.com>
+description: |
+  Elasticsearch is the distributed search and analytics engine.
+summary: |
+  A distributed search and analytics solution.
+series: [kubernetes]
+
+
