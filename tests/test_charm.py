@@ -2,35 +2,37 @@
 # See LICENSE file for licensing details.
 
 import unittest
-from unittest.mock import Mock
+import yaml
 
 from ops.testing import Harness
 from charm import ElasticsearchOperatorCharm
 
+MINIMAL_CONFIG = {
+    'elasticsearch-image-path': 'elastic',
+    'cluster-name': 'elasticsearch',
+    'advertised-port': 9200
+}
+
 
 class TestCharm(unittest.TestCase):
-    def test_config_changed(self):
-        harness = Harness(ElasticsearchOperatorCharm)
-        # from 0.8 you should also do:
-        # self.addCleanup(harness.cleanup)
-        harness.begin()
-        self.assertEqual(list(harness.charm._stored.things), [])
-        harness.update_config({"thing": "foo"})
-        self.assertEqual(list(harness.charm._stored.things), ["foo"])
+    def setUp(self):
+        self.harness = Harness(ElasticsearchOperatorCharm)
+        self.addCleanup(self.harness.cleanup)
+        self.harness.begin()
 
-    def test_action(self):
-        harness = Harness(ElasticsearchOperatorCharm)
-        harness.begin()
-        # the harness doesn't (yet!) help much with actions themselves
-        action_event = Mock(params={"fail": ""})
-        harness.charm._on_fortune_action(action_event)
+    @unittest.skip("Configuation file : not yet implemented")
+    def test_cluster_name_can_be_changed(self):
+        self.harness.set_leader(True)
+        name_config = MINIMAL_CONFIG.copy()
+        name_config['cluster-name'] = 'new name'
+        self.harness.update_config(name_config)
+        pod_spec, _ = self.harness.get_pod_spec()
+        config = elastic_config(pod_spec)
+        self.assertEqual(config['cluster']['name'],
+                         name_config['cluster-name'])
 
-        self.assertTrue(action_event.set_results.called)
 
-    def test_action_fail(self):
-        harness = Harness(ElasticsearchOperatorCharm)
-        harness.begin()
-        action_event = Mock(params={"fail": "fail this"})
-        harness.charm._on_fortune_action(action_event)
-
-        self.assertEqual(action_event.fail.call_args, [("fail this",)])
+def elastic_config(pod_spec):
+    config_yaml = pod_spec[0]['containers'][0]['files'][0]['files']['elasticsearch.yml']
+    config_dict = yaml.safe_load(config_yaml)
+    return config_dict

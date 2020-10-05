@@ -10,5 +10,7 @@ description: |
 summary: |
   A distributed search and analytics solution.
 series: [kubernetes]
-
-
+storage:
+  data:
+    type: filesystem
+    location: /usr/share/elasticsearch/data
