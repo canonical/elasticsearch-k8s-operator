@@ -75,6 +75,10 @@ class ElasticsearchOperatorCharm(CharmBase):
     def _configure_pod(self):
         """Setup a new Elasticsearch Pod specification
         """
+        if not self.unit.is_leader():
+            self.unit.status = ActiveStatus()
+            return
+
         logger.debug('Configuring Pod')
 
         self.unit.status = MaintenanceStatus('Setting pod spec')
