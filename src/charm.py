@@ -12,6 +12,8 @@ from ops.model import ActiveStatus, MaintenanceStatus
 
 logger = logging.getLogger(__name__)
 
+PEER = 'elasticsearch'
+
 
 class ElasticsearchOperatorCharm(CharmBase):
     _stored = StoredState()
@@ -20,6 +22,11 @@ class ElasticsearchOperatorCharm(CharmBase):
         super().__init__(*args)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.stop, self._on_stop)
+        self.framework.observe(self.on[PEER].relation_joined,
+                               self._on_elasticsearch_unit_joined)
+        self.framework.observe(self.on[PEER].relation_changed,
+                               self._on_elasticsearch_relation_changed)
+        self._stored.set_default(nodes=set())
 
     def _on_config_changed(self, _):
         """Set a new Juju pod specification
@@ -30,6 +37,19 @@ class ElasticsearchOperatorCharm(CharmBase):
         """Mark unit is inactive
         """
         self.unit.status = MaintenanceStatus('Pod is terminating.')
+
+    def _on_elasticsearch_unit_joined(self, event):
+        address = self.model.get_binding(event.relation).network.bind_address
+        event.relation.data[self.unit]['bind-address'] = str(address)
+
+    def _on_elasticsearch_relation_changed(self, event):
+        if self.unit.is_leader():
+            logger.debug("Old Peer Node Addresses : {}".format(
+                list(self._stored.nodes)))
+            address = event.relation.data[event.unit].get('bind-address')
+            if address:
+                logger.debug("New Peer Node Address : {}".format(address))
+                self._stored.nodes.add(str(address))
 
     def _elasticsearch_config(self):
         """Construct Elasticsearch configuation
