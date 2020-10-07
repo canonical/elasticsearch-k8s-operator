@@ -1,7 +1,6 @@
-# Copyright 2020 Balbir Thomas
-# Copyright 2020 Justin M Clark
+# Copyright 2020 Canonical Ltd.
 # See LICENSE file for licensing details.
-name: elasticsearch-operator
+name: elasticsearch
 maintainers:
     - Balbir Thomas <balbir.thomas@canonical.com>
     - Justin M Clark <justin.clark@canonical.com>
