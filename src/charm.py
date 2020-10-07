@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2020 Balbir Thomas
+# Copyright 2020 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 import logging
@@ -52,7 +52,7 @@ class ElasticsearchOperatorCharm(CharmBase):
                 self._stored.nodes.add(str(address))
 
     def _elasticsearch_config(self):
-        """Construct Elasticsearch configuation
+        """Construct Elasticsearch configuration
         """
         charm_config = self.model.config
 
@@ -69,24 +69,26 @@ class ElasticsearchOperatorCharm(CharmBase):
         logger.debug('Building Pod Spec')
         charm_config = self.model.config
         spec = {
+            'version': 3,
             'containers': [{
                 'name': self.app.name,
                 'imageDetails': {
                     'imagePath': charm_config['elasticsearch-image-path'],
                 },
-                'livenessProbe': {
-                    'httpGet': {
-                        'path': '/_cat/health?v',
-                        'port': charm_config['advertised-port']
-                    },
-                    'initialDelaySeconds': 30,
-                    'timeoutSeconds': 30
-                },
                 'ports': [{
                     'containerPort': charm_config['advertised-port'],
-                    'name': 'api-port',
                     'protocol': 'TCP'
-                }]
+                }],
+                'kubernetes': {
+                    'livenessProbe': {
+                        'httpGet': {
+                            'path': '/_cat/health?v',
+                            'port': charm_config['advertised-port']
+                        },
+                        'initialDelaySeconds': 30,
+                        'timeoutSeconds': 30
+                    },
+                },
             }]
         }
 
