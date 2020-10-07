@@ -10,6 +10,9 @@ description: |
 summary: |
   A distributed search and analytics solution.
 series: [kubernetes]
+peers:
+  elasticsearch:
+    interface: elasticsearch
 storage:
   data:
     type: filesystem
