@@ -76,14 +76,14 @@ class ElasticsearchOperatorCharm(CharmBase):
                     'imagePath': charm_config['elasticsearch-image-path'],
                 },
                 'ports': [{
-                    'containerPort': charm_config['advertised-port'],
+                    'containerPort': charm_config['http-port'],
                     'protocol': 'TCP'
                 }],
                 'kubernetes': {
                     'livenessProbe': {
                         'httpGet': {
                             'path': '/_cat/health?v',
-                            'port': charm_config['advertised-port']
+                            'port': charm_config['http-port']
                         },
                         'initialDelaySeconds': 30,
                         'timeoutSeconds': 30

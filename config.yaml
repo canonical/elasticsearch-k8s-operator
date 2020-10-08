@@ -10,7 +10,7 @@ options:
     default: "elasticsearch"
     description: Name of Elasticsearch cluster.
     type: string
-  advertised-port:
+  http-port:
     default: 9200
     description: Port on which Elasticsearch HTTP API is exposed.
     type: int

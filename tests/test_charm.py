@@ -10,7 +10,7 @@ from charm import ElasticsearchOperatorCharm
 MINIMAL_CONFIG = {
     'elasticsearch-image-path': 'elastic',
     'cluster-name': 'elasticsearch',
-    'advertised-port': 9200
+    'http-port': 9200
 }
 
 
