@@ -63,6 +63,20 @@ class ElasticsearchOperatorCharm(CharmBase):
 
         return yaml.dump(elastic_config)
 
+    def _jvm_config(self):
+        with open('config/jvm.options') as text_file:
+            return text_file.read()
+
+    def _logging_config(self):
+        with open('config/logging.yml') as yaml_file:
+            logging_config = yaml.safe_load(yaml_file)
+
+        return yaml.dump(logging_config)
+
+    def _log4j_config(self):
+        with open('config/log4j2.properties') as text_file:
+            return text_file.read()
+
     def _build_pod_spec(self):
         """Construct a Juju pod specification for Elasticsearch
         """
@@ -78,6 +92,26 @@ class ElasticsearchOperatorCharm(CharmBase):
                 'ports': [{
                     'containerPort': charm_config['http-port'],
                     'protocol': 'TCP'
+                }],
+                'envConfig': {
+                    'ES_PATH_CONF': '/etc/elasticsearch'
+                },
+                'volumeConfig': [{
+                    'name': 'config',
+                    'mountPath': '/usr/share/elasticsearch/config',
+                    'files': [{
+                        'path': 'elasticsearch.yml',
+                        'content': self._elasticsearch_config()
+                    }, {
+                        'path': 'jvm.options',
+                        'content': self._jvm_config()
+                    }, {
+                        'path': 'logging.yml',
+                        'content': self._logging_config()
+                    }, {
+                        'path': 'log4j2.properties',
+                        'content': self._log4j_config()
+                    }]
                 }],
                 'kubernetes': {
                     'livenessProbe': {
