@@ -14,6 +14,7 @@ from ops.model import ActiveStatus, MaintenanceStatus
 logger = logging.getLogger(__name__)
 
 PEER = 'elasticsearch'
+NODE_NAME = "{}-{}.{}-endpoints.{}.svc.cluster.local"
 
 
 class ElasticsearchOperatorCharm(CharmBase):
@@ -27,7 +28,10 @@ class ElasticsearchOperatorCharm(CharmBase):
                                self._on_elasticsearch_unit_joined)
         self.framework.observe(self.on[PEER].relation_changed,
                                self._on_elasticsearch_relation_changed)
-        self._stored.set_default(nodes=set())
+        self._stored.set_default(nodes=[NODE_NAME.format(self.meta.name,
+                                                         0,
+                                                         self.meta.name,
+                                                         self.model.name)])
 
     def _on_config_changed(self, _):
         """Set a new Juju pod specification
@@ -40,17 +44,14 @@ class ElasticsearchOperatorCharm(CharmBase):
         self.unit.status = MaintenanceStatus('Pod is terminating.')
 
     def _on_elasticsearch_unit_joined(self, event):
-        address = self.model.get_binding(event.relation).network.bind_address
-        event.relation.data[self.unit]['bind-address'] = str(address)
+        if self.unit.is_leader():
+            node_num = len(self._stored.nodes)
+            self._stored.nodes.append(self._host_name(node_num))
 
     def _on_elasticsearch_relation_changed(self, event):
         if self.unit.is_leader():
-            logger.debug("Old Peer Node Addresses : {}".format(
+            logger.debug("Peer Node Names : {}".format(
                 list(self._stored.nodes)))
-            address = event.relation.data[event.unit].get('bind-address')
-            if address:
-                logger.debug("New Peer Node Address : {}".format(address))
-                self._stored.nodes.add(str(address))
         self._configure_pod()
 
     def _elasticsearch_config(self):
@@ -79,10 +80,15 @@ class ElasticsearchOperatorCharm(CharmBase):
         with open('config/log4j2.properties') as text_file:
             return text_file.read()
 
+    def _host_name(self, node_num):
+        return NODE_NAME.format(self.meta.name,
+                                node_num,
+                                self.meta.name,
+                                self.model.name)
+
     def _seed_hosts(self):
-        seed_hosts = ["0.0.0.0"]
-        if len(self._stored.nodes) > 0:
-            seed_hosts = list(self._stored.nodes)
+        seed_hosts = list(self._stored.nodes)
+        logger.debug('Seed Hosts : {}'.format(seed_hosts))
 
         return '\n'.join(seed_hosts)
 
