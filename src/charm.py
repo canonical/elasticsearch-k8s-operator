@@ -4,6 +4,7 @@
 
 import logging
 import yaml
+import hashlib
 
 from ops.charm import CharmBase
 from ops.main import main
@@ -50,6 +51,7 @@ class ElasticsearchOperatorCharm(CharmBase):
             if address:
                 logger.debug("New Peer Node Address : {}".format(address))
                 self._stored.nodes.add(str(address))
+        self._configure_pod()
 
     def _elasticsearch_config(self):
         """Construct Elasticsearch configuration
@@ -77,6 +79,19 @@ class ElasticsearchOperatorCharm(CharmBase):
         with open('config/log4j2.properties') as text_file:
             return text_file.read()
 
+    def _seed_hosts(self):
+        seed_hosts = ["0.0.0.0"]
+        if len(self._stored.nodes) > 0:
+            seed_hosts = list(self._stored.nodes)
+
+        return '\n'.join(seed_hosts)
+
+    def _config_hash(self):
+        config_string = self._seed_hosts() + self._elasticsearch_config() +\
+            self._jvm_config() + self._logging_config() + self._log4j_config()
+
+        return hashlib.md5(config_string.encode()).hexdigest()
+
     def _build_pod_spec(self):
         """Construct a Juju pod specification for Elasticsearch
         """
@@ -94,12 +109,16 @@ class ElasticsearchOperatorCharm(CharmBase):
                     'protocol': 'TCP'
                 }],
                 'envConfig': {
-                    'ES_PATH_CONF': '/etc/elasticsearch'
+                    'ES_PATH_CONF': '/etc/elasticsearch',
+                    'ES_CONFIG_HASH': self._config_hash()
                 },
                 'volumeConfig': [{
                     'name': 'config',
                     'mountPath': '/usr/share/elasticsearch/config',
                     'files': [{
+                        'path': 'unicast_hosts.txt',
+                        'content': self._seed_hosts()
+                    }, {
                         'path': 'elasticsearch.yml',
                         'content': self._elasticsearch_config()
                     }, {
