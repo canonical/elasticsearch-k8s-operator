@@ -22,6 +22,13 @@ class ElasticsearchOperatorCharm(CharmBase):
     _stored = StoredState()
 
     def __init__(self, *args):
+        """Create an Elasticsearch charm
+
+        This Elasticsearch charm supports high availability by peering
+        between multiple units. It is recomended to create at least 3
+        units using `juju add-unit` or using `--num-units` option of
+        `juju deploy`.
+        """
         super().__init__(*args)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.stop, self._on_stop)
@@ -41,20 +48,34 @@ class ElasticsearchOperatorCharm(CharmBase):
         self._configure_pod()
 
     def _on_stop(self, _):
-        """Mark unit is inactive
+        """Mark this unit as inactive
         """
         self.unit.status = MaintenanceStatus('Pod is terminating.')
 
     def _on_elasticsearch_unit_joined(self, event):
+        """Add a new Elasticsearch node into the cluster
+
+        Each new node uses a list seed hosts to discover other nodes
+        and join the cluster. The number of seed hosts (SEED_SIZE) is
+        fixed by the charm internally, and the same list of host names is
+        provided to each new joining node through its pod specification.
+        """
         if self.unit.is_leader():
             node_num = len(self._stored.nodes)
+            # only updated the list of seed nodes if there fewer than
+            # the minimum specified by this charm
             if node_num < SEED_SIZE:
                 self._stored.nodes.append(self._host_name(node_num))
 
     def _on_elasticsearch_relation_changed(self, event):
+        """Reset Elasticsearch pod specification if changed
+        """
         if self.unit.is_leader():
             logger.debug("Peer Node Names : {}".format(
                 list(self._stored.nodes)))
+        # The list of seed nodes changes only if there were fewer than
+        # the minimum required. Hence a pod reconfiguation is only
+        # necessary in such a case.
         if len(self._stored.nodes) < SEED_SIZE:
             self._configure_pod()
 
@@ -71,32 +92,55 @@ class ElasticsearchOperatorCharm(CharmBase):
         return yaml.dump(elastic_config)
 
     def _jvm_config(self):
+        """Construct Java Virtual Machine configuration for Elasticsearch
+        """
         with open('config/jvm.options') as text_file:
             return text_file.read()
 
     def _logging_config(self):
+        """Construct the logging configuration for Elasticsearch
+        """
         with open('config/logging.yml') as yaml_file:
             logging_config = yaml.safe_load(yaml_file)
 
         return yaml.dump(logging_config)
 
     def _log4j_config(self):
+        """Construct the Log4J configuration for Elasticsearch
+        """
         with open('config/log4j2.properties') as text_file:
             return text_file.read()
 
     def _host_name(self, node_num):
+        """Hostname of the nth Juju unit for this charm
+        """
         return NODE_NAME.format(self.meta.name,
                                 node_num,
                                 self.meta.name,
                                 self.model.name)
 
     def _seed_hosts(self):
+        """Generate the list of seed host names
+
+        This list is used to populate the unicast_hosts.txt file used by
+        Elasticsearch.
+        """
         seed_hosts = list(self._stored.nodes)
         logger.debug('Seed Hosts : {}'.format(seed_hosts))
 
         return '\n'.join(seed_hosts)
 
     def _config_hash(self):
+        """Fingerprint for an Elasticsearch configuration setup
+
+        This has the complete set of Elasticsearch configuration files
+        is used to set an enviroment variable in the application
+        container. This is necessary so that any updated to the
+        configuration (essentially a ConfigMap in Kubernetes) does
+        indeed make Juju trigger the creation of pods using the
+        updated configuration.
+
+        """
         config_string = self._seed_hosts() + self._elasticsearch_config() +\
             self._jvm_config() + self._logging_config() + self._log4j_config()
 
