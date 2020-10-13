@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 PEER = 'elasticsearch'
 NODE_NAME = "{}-{}.{}-endpoints.{}.svc.cluster.local"
+SEED_SIZE = 3
 
 
 class ElasticsearchOperatorCharm(CharmBase):
@@ -29,9 +30,10 @@ class ElasticsearchOperatorCharm(CharmBase):
         self.framework.observe(self.on[PEER].relation_changed,
                                self._on_elasticsearch_relation_changed)
         self._stored.set_default(nodes=[NODE_NAME.format(self.meta.name,
-                                                         0,
+                                                         i,
                                                          self.meta.name,
-                                                         self.model.name)])
+                                                         self.model.name)
+                                        for i in range(SEED_SIZE)])
 
     def _on_config_changed(self, _):
         """Set a new Juju pod specification
@@ -46,13 +48,15 @@ class ElasticsearchOperatorCharm(CharmBase):
     def _on_elasticsearch_unit_joined(self, event):
         if self.unit.is_leader():
             node_num = len(self._stored.nodes)
-            self._stored.nodes.append(self._host_name(node_num))
+            if node_num < SEED_SIZE:
+                self._stored.nodes.append(self._host_name(node_num))
 
     def _on_elasticsearch_relation_changed(self, event):
         if self.unit.is_leader():
             logger.debug("Peer Node Names : {}".format(
                 list(self._stored.nodes)))
-        self._configure_pod()
+        if len(self._stored.nodes) < SEED_SIZE:
+            self._configure_pod()
 
     def _elasticsearch_config(self):
         """Construct Elasticsearch configuration
