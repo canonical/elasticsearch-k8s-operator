@@ -36,10 +36,7 @@ class ElasticsearchOperatorCharm(CharmBase):
                                self._on_elasticsearch_unit_joined)
         self.framework.observe(self.on[PEER].relation_changed,
                                self._on_elasticsearch_relation_changed)
-        self._stored.set_default(nodes=[NODE_NAME.format(self.meta.name,
-                                                         i,
-                                                         self.meta.name,
-                                                         self.model.name)
+        self._stored.set_default(nodes=[self._host_name(i)
                                         for i in range(SEED_SIZE)])
 
     def _on_config_changed(self, _):
@@ -65,7 +62,8 @@ class ElasticsearchOperatorCharm(CharmBase):
             # only updated the list of seed nodes if there fewer than
             # the minimum specified by this charm
             if node_num < SEED_SIZE:
-                self._stored.nodes.append(self._host_name(node_num))
+                for i in range(SEED_SIZE - node_num):
+                    self._stored.nodes.append(self._host_name(i))
 
     def _on_elasticsearch_relation_changed(self, event):
         """Reset Elasticsearch pod specification if changed
