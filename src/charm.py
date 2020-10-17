@@ -2,19 +2,21 @@
 # Copyright 2020 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-import logging
-import yaml
 import hashlib
+import logging
+import requests
+import yaml
 
 from ops.charm import CharmBase
 from ops.main import main
 from ops.framework import StoredState
-from ops.model import ActiveStatus, MaintenanceStatus
+from ops.model import ActiveStatus, MaintenanceStatus, BlockedStatus
 
 logger = logging.getLogger(__name__)
 
 PEER = 'elasticsearch'
 NODE_NAME = "{}-{}.{}-endpoints.{}.svc.cluster.local"
+CLUSTER_SETTINGS_URL = "http://{}:{}/_cluster/settings"
 SEED_SIZE = 3
 
 
@@ -38,18 +40,27 @@ class ElasticsearchOperatorCharm(CharmBase):
                                self._on_elasticsearch_relation_changed)
         self._stored.set_default(nodes=[self._host_name(i)
                                         for i in range(SEED_SIZE)])
+        self._stored.set_default(app_ip='')
+
+    @property
+    def num_hosts(self) -> int:
+        """The total number of Elasticsearch hosts.
+        """
+        rel = self.model.get_relation(PEER)
+        return len(rel.units) + 1 if rel is not None else 1
 
     def _on_config_changed(self, _):
         """Set a new Juju pod specification
         """
         self._configure_pod()
+        self._configure_dynamic_settings()
 
     def _on_stop(self, _):
         """Mark this unit as inactive
         """
         self.unit.status = MaintenanceStatus('Pod is terminating.')
 
-    def _on_elasticsearch_unit_joined(self, event):
+    def _on_elasticsearch_unit_joined(self, _):
         """Add a new Elasticsearch node into the cluster
 
         Each new node uses a list seed hosts to discover other nodes
@@ -72,10 +83,49 @@ class ElasticsearchOperatorCharm(CharmBase):
             logger.debug("Peer Node Names : {}".format(
                 list(self._stored.nodes)))
         # The list of seed nodes changes only if there were fewer than
-        # the minimum required. Hence a pod reconfiguation is only
+        # the minimum required. Hence a pod reconfiguration is only
         # necessary in such a case.
         if len(self._stored.nodes) < SEED_SIZE:
             self._configure_pod()
+
+        # get the ingress-address of the elasticsearch service
+        self._stored.app_ip = event.relation.data[event.unit]['ingress-address']
+        self._configure_dynamic_settings()
+
+    def _min_master_nodes(self):
+        """Returns the minimum master nodes setting based on total number of nodes
+        """
+        return 1 if self.num_hosts <= 2 else self.num_hosts // 2 + 1
+
+    def _build_dynamic_settings_payload(self):
+        """Construct payload defining the dynamic cluster configuration settings
+        """
+        dynamic_config = {
+            'persistent': {
+                'discovery.zen.minimum_master_nodes': self._min_master_nodes(),
+            },
+        }
+
+        return dynamic_config
+
+    def _configure_dynamic_settings(self):
+        """Use ES API to create dynamic config changes without pod resets
+        """
+        # if we don't have an app_ip (no peer units), we can safely return
+        # also do not configure settings if we aren't the application leader
+        if not self._stored.app_ip or not self.unit.is_leader():
+            return
+
+        url = CLUSTER_SETTINGS_URL.format(
+            self._stored.app_ip,
+            self.model.config['http-port'],
+        )
+        cluster_settings = self._build_dynamic_settings_payload()
+        resp = requests.put(url, json=cluster_settings)
+        if not resp.ok:
+            logger.error('Could not set dynamic ES settings via the REST API. '
+                         'Response code: {}'.format(resp.status_code))
+            self.unit.status = BlockedStatus('Failure updating cluster-wide settings')
 
     def _elasticsearch_config(self):
         """Construct Elasticsearch configuration
@@ -132,12 +182,11 @@ class ElasticsearchOperatorCharm(CharmBase):
         """Fingerprint for an Elasticsearch configuration setup
 
         This has the complete set of Elasticsearch configuration files
-        is used to set an enviroment variable in the application
+        is used to set an environment variable in the application
         container. This is necessary so that any updated to the
         configuration (essentially a ConfigMap in Kubernetes) does
         indeed make Juju trigger the creation of pods using the
         updated configuration.
-
         """
         config_string = self._seed_hosts() + self._elasticsearch_config() +\
             self._jvm_config() + self._logging_config() + self._log4j_config()
@@ -206,8 +255,10 @@ class ElasticsearchOperatorCharm(CharmBase):
             self.unit.status = ActiveStatus()
             return
 
-        logger.debug('Configuring Pod')
+        logger.debug('Configuring dynamic settings so pod '
+                     'does not have to restart')
 
+        logger.debug('Configuring Pod')
         self.unit.status = MaintenanceStatus('Setting pod spec')
         pod_spec = self._build_pod_spec()
 
