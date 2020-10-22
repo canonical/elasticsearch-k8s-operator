@@ -4,9 +4,12 @@
 
 import hashlib
 import logging
-import requests
+import time
+import traceback
 import yaml
 
+from elasticsearch import Elasticsearch
+from elasticsearch.exceptions import RequestError
 from ops.charm import CharmBase
 from ops.main import main
 from ops.framework import StoredState
@@ -15,8 +18,8 @@ from ops.model import ActiveStatus, MaintenanceStatus, BlockedStatus
 logger = logging.getLogger(__name__)
 
 PEER = 'elasticsearch'
+CLUSTER_SETTINGS_URL = "http://{}/_cluster/settings"
 NODE_NAME = "{}-{}.{}-endpoints.{}.svc.cluster.local"
-CLUSTER_SETTINGS_URL = "http://{}:{}/_cluster/settings"
 SEED_SIZE = 3
 
 
@@ -27,7 +30,7 @@ class ElasticsearchOperatorCharm(CharmBase):
         """Create an Elasticsearch charm
 
         This Elasticsearch charm supports high availability by peering
-        between multiple units. It is recomended to create at least 3
+        between multiple units. It is recommended to create at least 3
         units using `juju add-unit` or using `--num-units` option of
         `juju deploy`.
         """
@@ -40,11 +43,11 @@ class ElasticsearchOperatorCharm(CharmBase):
                                self._on_elasticsearch_relation_changed)
         self._stored.set_default(nodes=[self._host_name(i)
                                         for i in range(SEED_SIZE)])
-        self._stored.set_default(app_ip='')
+        self._stored.set_default(ingress_address='')
 
     @property
     def num_hosts(self) -> int:
-        """The total number of Elasticsearch hosts.
+        """The total number of Elasticsearch hosts
         """
         rel = self.model.get_relation(PEER)
         return len(rel.units) + 1 if rel is not None else 1
@@ -88,8 +91,13 @@ class ElasticsearchOperatorCharm(CharmBase):
         if len(self._stored.nodes) < SEED_SIZE:
             self._configure_pod()
 
-        # get the ingress-address of the elasticsearch service
-        self._stored.app_ip = event.relation.data[event.unit]['ingress-address']
+        # get/update the ingress-address:ip of the elasticsearch cluster
+        # if the remote unit is still around (not departed/broken)
+        if self.unit is not None:
+            self._stored.ingress_address = '{}:{}'.format(
+                event.relation.data[event.unit]['ingress-address'],
+                self.model.config['http-port'],
+            )
         self._configure_dynamic_settings()
 
     def _min_master_nodes(self):
@@ -108,23 +116,53 @@ class ElasticsearchOperatorCharm(CharmBase):
 
         return dynamic_config
 
+    def _get_es_client(self) -> Elasticsearch():
+        """Return an instance of the Elasticsearch Python client
+
+        ES Python module docs:
+        https://elasticsearch-py.readthedocs.io/en/master/api.html#elasticsearch
+        """
+        # if we don't have an ingress_address (no peer units), it means we are unable
+        # to access the application ingress-address and cannot create an ES Python client
+        if not self._stored.ingress_address:
+            logger.warning('Cannot create ES Python client without a peer relation. '
+                           'Add peer units with "juju add-unit -n2 elasticsearch-operator"')
+            return None
+        host = self._stored.ingress_address
+
+        # TODO: if credentials are added to the config options, be sure to
+        #       add them in the instantiation of the ES client
+        return Elasticsearch(host)
+
     def _configure_dynamic_settings(self):
         """Use ES API to create dynamic config changes without pod resets
         """
-        # if we don't have an app_ip (no peer units), we can safely return
-        # also do not configure settings if we aren't the application leader
-        if not self._stored.app_ip or not self.unit.is_leader():
+        if not self.unit.is_leader():
             return
 
-        url = CLUSTER_SETTINGS_URL.format(
-            self._stored.app_ip,
-            self.model.config['http-port'],
-        )
         cluster_settings = self._build_dynamic_settings_payload()
-        resp = requests.put(url, json=cluster_settings)
-        if not resp.ok:
-            logger.error('Could not set dynamic ES settings via the REST API. '
-                         'Response code: {}'.format(resp.status_code))
+        es = self._get_es_client()
+        if es is None:
+            logger.error('Cannot set cluster settings dynamically. '
+                         'Ensure the cluster has at least 3 nodes.')
+            return
+
+        # attempt to make cluster settings changes
+        # this does not always succeed because the request can
+        # happen before nodes are officially added to the cluster
+        # for now, we will wait until the number of ES units the charm
+        # can see matches the number of nodes ES can see
+        try:
+            # busy loop while nodes get registered on cluster
+            # TODO: find a more elegant solution
+            while 1:
+                health = es.cat.health(format='json', h='node.total')
+                if int(health[0]['node.total']) == self.num_hosts:
+                    break
+                time.sleep(1)
+            es.cluster.put_settings(body=cluster_settings)
+        except RequestError:
+            logger.error(traceback.format_exc())
             self.unit.status = BlockedStatus('Failure updating cluster-wide settings')
 
     def _elasticsearch_config(self):
@@ -239,8 +277,16 @@ class ElasticsearchOperatorCharm(CharmBase):
                             'path': '/_cat/health?v',
                             'port': charm_config['http-port']
                         },
-                        'initialDelaySeconds': 30,
-                        'timeoutSeconds': 30
+                        'initialDelaySeconds': 20,
+                        'timeoutSeconds': 20,
+                    },
+                    'readinessProbe': {
+                        'httpGet': {
+                            'path': '/_cat/health?v',
+                            'port': charm_config['http-port']
+                        },
+                        'initialDelaySeconds': 10,
+                        'timeoutSeconds': 10,
                     },
                 },
             }]
