@@ -13,6 +13,9 @@ series: [kubernetes]
 peers:
   elasticsearch:
     interface: elasticsearch
+provides:
+  datastore:
+    interface: es-datastore
 storage:
   data:
     type: filesystem
