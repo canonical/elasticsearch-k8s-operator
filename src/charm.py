@@ -41,6 +41,8 @@ class ElasticsearchOperatorCharm(CharmBase):
                                self._on_elasticsearch_unit_joined)
         self.framework.observe(self.on[PEER].relation_changed,
                                self._on_elasticsearch_relation_changed)
+        self.framework.observe(self.on['datastore'].relation_changed,
+                               self._on_datastore_relation_changed)
         self._stored.set_default(nodes=[self._host_name(i)
                                         for i in range(SEED_SIZE)])
         self._stored.set_default(ingress_address='')
@@ -99,6 +101,15 @@ class ElasticsearchOperatorCharm(CharmBase):
                 self.model.config['http-port'],
             )
         self._configure_dynamic_settings()
+
+    def _on_datastore_relation_changed(self, event):
+        """This event handler only needs to pass the port to the remote unit
+
+        The related app will automatically have access to the ingress-address
+        of the Elasticsearch cluster.
+        """
+        if self.unit.is_leader():
+            event.relation.data[self.unit]['port'] = str(self.model.config['http-port'])
 
     def _min_master_nodes(self):
         """Returns the minimum master nodes setting based on total number of nodes
