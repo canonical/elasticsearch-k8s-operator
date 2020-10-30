@@ -5,7 +5,10 @@ import random
 import unittest
 import yaml
 
+from unittest import mock
+
 import charm
+from ops.model import ActiveStatus, MaintenanceStatus
 from ops.testing import Harness
 from charm import ElasticsearchOperatorCharm
 
@@ -107,6 +110,146 @@ class TestCharm(unittest.TestCase):
         payload = self.harness.charm._build_dynamic_settings_payload()
         actual_mmn = payload['persistent']['discovery.zen.minimum_master_nodes']
         self.assertEqual(expected_mmn, actual_mmn)
+
+    def test_peer_changed_handler_with_single_node_via_update_status_event(self):
+        self.harness.set_leader(True)
+        seed_config = MINIMAL_CONFIG.copy()
+        self.harness.update_config(seed_config)
+
+        # check that the number of nodes and the status is correct
+        # after emitting the update_status event
+        self.assertEqual(self.harness.charm.num_hosts, 1)
+        self.harness.charm.on.update_status.emit()
+        self.assertEqual(
+            self.harness.charm.unit.status,
+            ActiveStatus('Elasticsearch ready on single node')
+        )
+
+    @mock.patch('charm.ElasticsearchOperatorCharm.num_es_nodes', new_callable=mock.PropertyMock)
+    def test_relation_changed_with_node_and_unit_mismatch(self, mock_es_nodes):
+        self.harness.set_leader(True)
+        seed_config = MINIMAL_CONFIG.copy()
+        self.harness.update_config(seed_config)
+
+        expected_num_es_nodes = 2
+        mock_es_nodes.return_value = expected_num_es_nodes
+        expected_num_units = 3
+
+        # add a different number of units than number of es_nodes
+        rel_id = self.harness.add_relation('elasticsearch', 'elasticsearch')
+        rel = self.harness.model.get_relation('elasticsearch')
+        for i in range(1, expected_num_units):
+            self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
+
+        # check that there is a mismatch and what happens
+        # after emitting the relation changed event
+        self.assertEqual(expected_num_es_nodes, self.harness.charm.num_es_nodes)
+        self.assertEqual(expected_num_units, self.harness.charm.num_hosts)
+
+        # check that the proper status has been set in _elasticsearch_relation_changed
+        self.harness.charm.on.elasticsearch_relation_changed.emit(rel)
+        self.assertEqual(
+            self.harness.charm.unit.status,
+            MaintenanceStatus('Waiting for nodes to join ES cluster')
+        )
+
+    @mock.patch('charm.ElasticsearchOperatorCharm.num_es_nodes', new_callable=mock.PropertyMock)
+    def test_relation_changed_with_node_and_unit_mismatch_via_update_status(self, mock_es_nodes):
+        self.harness.set_leader(True)
+        seed_config = MINIMAL_CONFIG.copy()
+        self.harness.update_config(seed_config)
+
+        expected_num_es_nodes = 2
+        mock_es_nodes.return_value = expected_num_es_nodes
+        expected_num_units = 3
+
+        # add a different number of units than number of es_nodes
+        rel_id = self.harness.add_relation('elasticsearch', 'elasticsearch')
+        for i in range(1, expected_num_units):
+            self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
+
+        # check that there is a mismatch and what happens
+        # after emitting the relation changed event
+        self.assertEqual(expected_num_es_nodes, self.harness.charm.num_es_nodes)
+        self.assertEqual(expected_num_units, self.harness.charm.num_hosts)
+
+        # check that the proper status has been set in _elasticsearch_relation_changed
+        self.harness.charm.on.update_status.emit()
+        self.assertEqual(
+            self.harness.charm.unit.status,
+            MaintenanceStatus('Waiting for nodes to join ES cluster')
+        )
+
+    @mock.patch('charm.ElasticsearchOperatorCharm._configure_dynamic_settings')
+    @mock.patch('charm.ElasticsearchOperatorCharm.num_es_nodes', new_callable=mock.PropertyMock)
+    def test_relation_changed_with_node_and_unit_match(self, mock_es_nodes, _):
+        self.harness.set_leader(True)
+        seed_config = MINIMAL_CONFIG.copy()
+        self.harness.update_config(seed_config)
+
+        expected_num_es_nodes = 3
+        mock_es_nodes.return_value = expected_num_es_nodes
+        expected_num_units = 3
+
+        # add a different number of units than number of es_nodes
+        rel_id = self.harness.add_relation('elasticsearch', 'elasticsearch')
+        rel = self.harness.model.get_relation('elasticsearch')
+        for i in range(1, expected_num_units):
+            self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
+
+        # check that there is a mismatch and what happens
+        # after emitting the relation changed event
+        self.assertEqual(expected_num_es_nodes, self.harness.charm.num_es_nodes)
+        self.assertEqual(expected_num_units, self.harness.charm.num_hosts)
+
+        # check that the proper status has been set and that the logs are correct
+        with self.assertLogs(level='INFO') as logger:
+            self.harness.charm.on.elasticsearch_relation_changed.emit(rel)
+            # check the logs
+            expected_logs = [
+                'INFO:charm:Configuring dynamic settings from _on_elasticsearch_relation_changed'
+            ]
+            self.assertEqual(sorted(logger.output), expected_logs)
+            # check the status
+            self.assertEqual(
+                self.harness.charm.unit.status,
+                ActiveStatus()
+            )
+
+    @mock.patch('charm.ElasticsearchOperatorCharm._configure_dynamic_settings')
+    @mock.patch('charm.ElasticsearchOperatorCharm.num_es_nodes', new_callable=mock.PropertyMock)
+    def test_relation_changed_with_node_and_unit_match_via_update_status(self, mock_es_nodes, _):
+        self.harness.set_leader(True)
+        seed_config = MINIMAL_CONFIG.copy()
+        self.harness.update_config(seed_config)
+
+        expected_num_es_nodes = 3
+        mock_es_nodes.return_value = expected_num_es_nodes
+        expected_num_units = 3
+
+        # add a different number of units than number of es_nodes
+        rel_id = self.harness.add_relation('elasticsearch', 'elasticsearch')
+        for i in range(1, expected_num_units):
+            self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
+
+        # check that there is a mismatch and what happens
+        # after emitting the relation changed event
+        self.assertEqual(expected_num_es_nodes, self.harness.charm.num_es_nodes)
+        self.assertEqual(expected_num_units, self.harness.charm.num_hosts)
+
+        # check that the proper status has been set and that the logs are correct
+        with self.assertLogs(level='INFO') as logger:
+            self.harness.charm.on.update_status.emit()
+            # check the logs
+            expected_logs = [
+                'INFO:charm:Configuring dynamic settings from _on_elasticsearch_relation_changed'
+            ]
+            self.assertEqual(sorted(logger.output), expected_logs)
+            # check the status
+            self.assertEqual(
+                self.harness.charm.unit.status,
+                ActiveStatus()
+            )
 
 
 def config_file(pod_spec, file):
