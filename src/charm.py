@@ -4,7 +4,6 @@
 
 import hashlib
 import logging
-import time
 import traceback
 import yaml
 
@@ -35,17 +34,31 @@ class ElasticsearchOperatorCharm(CharmBase):
         `juju deploy`.
         """
         super().__init__(*args)
+
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.stop, self._on_stop)
-        self.framework.observe(self.on[PEER].relation_joined,
-                               self._on_elasticsearch_unit_joined)
-        self.framework.observe(self.on[PEER].relation_changed,
-                               self._on_elasticsearch_relation_changed)
-        self.framework.observe(self.on['datastore'].relation_changed,
-                               self._on_datastore_relation_changed)
+        self.framework.observe(
+            self.on[PEER].relation_joined,
+            self._on_elasticsearch_unit_joined
+        )
+
+        # trigger _on_elasticsearch_relation_changed on both
+        # update_status and the normal peer relation changed
+        self.framework.observe(
+            self.on.update_status,
+            self._on_elasticsearch_relation_changed
+        )
+        self.framework.observe(
+            self.on[PEER].relation_changed,
+            self._on_elasticsearch_relation_changed
+        )
+        self.framework.observe(
+            self.on['datastore'].relation_changed,
+            self._on_datastore_relation_changed
+        )
+
         self._stored.set_default(nodes=[self._host_name(i)
                                         for i in range(SEED_SIZE)])
-        self._stored.set_default(ingress_address='')
 
     @property
     def num_hosts(self) -> int:
@@ -54,11 +67,29 @@ class ElasticsearchOperatorCharm(CharmBase):
         rel = self.model.get_relation(PEER)
         return len(rel.units) + 1 if rel is not None else 1
 
+    @property
+    def num_es_nodes(self) -> int:
+        """The number of nodes recognized by the Elasticsearch cluster
+
+        In the case of a RequestError, return 0
+        """
+        es = self._get_es_client()
+        try:
+            health = es.cat.health(format='json', h='node.total')
+            return int(health[0]['node.total'])
+        except RequestError:
+            return 0
+
+    @property
+    def ingress_address(self) -> str:
+        """The ingress-address of the Elasticsearch cluster
+        """
+        return str(self.model.get_binding(PEER).network.ingress_address)
+
     def _on_config_changed(self, _):
         """Set a new Juju pod specification
         """
         self._configure_pod()
-        self._configure_dynamic_settings()
 
     def _on_stop(self, _):
         """Mark this unit as inactive
@@ -81,7 +112,7 @@ class ElasticsearchOperatorCharm(CharmBase):
                 for i in range(SEED_SIZE - node_num):
                     self._stored.nodes.append(self._host_name(i))
 
-    def _on_elasticsearch_relation_changed(self, event):
+    def _on_elasticsearch_relation_changed(self, _):
         """Reset Elasticsearch pod specification if changed
         """
         if self.unit.is_leader():
@@ -93,14 +124,16 @@ class ElasticsearchOperatorCharm(CharmBase):
         if len(self._stored.nodes) < SEED_SIZE:
             self._configure_pod()
 
-        # get/update the ingress-address:ip of the elasticsearch cluster
-        # if the remote unit is still around (not departed/broken)
-        if self.unit is not None:
-            self._stored.ingress_address = '{}:{}'.format(
-                event.relation.data[event.unit]['ingress-address'],
-                self.model.config['http-port'],
-            )
-        self._configure_dynamic_settings()
+        # only configure dynamic settings if all nodes have been
+        # recognized by the ES cluster and if the current unit is the leader
+        if self.num_hosts == 1:
+            self.unit.status = ActiveStatus('Elasticsearch ready on single node')
+        elif self.num_hosts != self.num_es_nodes:
+            self.unit.status = MaintenanceStatus('Waiting for nodes to join ES cluster')
+        else:
+            logger.info('Configuring dynamic settings from '
+                        '_on_elasticsearch_relation_changed')
+            self._configure_dynamic_settings()
 
     def _on_datastore_relation_changed(self, event):
         """This event handler only needs to pass the port to the remote unit
@@ -135,11 +168,10 @@ class ElasticsearchOperatorCharm(CharmBase):
         """
         # if we don't have an ingress_address (no peer units), it means we are unable
         # to access the application ingress-address and cannot create an ES Python client
-        if not self._stored.ingress_address:
-            logger.warning('Cannot create ES Python client without a peer relation. '
-                           'Add peer units with "juju add-unit -n2 elasticsearch-operator"')
-            return None
-        host = self._stored.ingress_address
+        host = '{}:{}'.format(
+            self.ingress_address,
+            self.model.config['http-port']
+        )
 
         # TODO: if credentials are added to the config options, be sure to
         #       add them in the instantiation of the ES client
@@ -147,31 +179,20 @@ class ElasticsearchOperatorCharm(CharmBase):
 
     def _configure_dynamic_settings(self):
         """Use ES API to create dynamic config changes without pod resets
+
+        Handlers calling this method must check the flag waiting_for_nodes
         """
         if not self.unit.is_leader():
+            self.unit.status = ActiveStatus()
             return
 
         cluster_settings = self._build_dynamic_settings_payload()
         es = self._get_es_client()
-        if es is None:
-            logger.error('Cannot set cluster settings dynamically. '
-                         'Ensure the cluster has at least 3 nodes.')
-            return
 
         # attempt to make cluster settings changes
-        # this does not always succeed because the request can
-        # happen before nodes are officially added to the cluster
-        # for now, we will wait until the number of ES units the charm
-        # can see matches the number of nodes ES can see
         try:
-            # busy loop while nodes get registered on cluster
-            # TODO: find a more elegant solution
-            while 1:
-                health = es.cat.health(format='json', h='node.total')
-                if int(health[0]['node.total']) == self.num_hosts:
-                    break
-                time.sleep(1)
             es.cluster.put_settings(body=cluster_settings)
+            self.unit.status = ActiveStatus()
         except RequestError:
             logger.error(traceback.format_exc())
             self.unit.status = BlockedStatus('Failure updating cluster-wide settings')
