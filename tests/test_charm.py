@@ -141,8 +141,7 @@ class TestCharm(unittest.TestCase):
         for i in range(1, expected_num_units):
             self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
 
-        # check that there is a mismatch and what happens
-        # after emitting the relation changed event
+        # check that there is a mismatch
         self.assertEqual(expected_num_es_nodes, self.harness.charm.num_es_nodes)
         self.assertEqual(expected_num_units, self.harness.charm.num_hosts)
 
@@ -168,8 +167,7 @@ class TestCharm(unittest.TestCase):
         for i in range(1, expected_num_units):
             self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
 
-        # check that there is a mismatch and what happens
-        # after emitting the relation changed event
+        # check that there is a mismatch
         self.assertEqual(expected_num_es_nodes, self.harness.charm.num_es_nodes)
         self.assertEqual(expected_num_units, self.harness.charm.num_hosts)
 
@@ -191,14 +189,13 @@ class TestCharm(unittest.TestCase):
         mock_es_nodes.return_value = expected_num_es_nodes
         expected_num_units = 3
 
-        # add a different number of units than number of es_nodes
+        # add same number of units as number of es_nodes
         rel_id = self.harness.add_relation('elasticsearch', 'elasticsearch')
         rel = self.harness.model.get_relation('elasticsearch')
         for i in range(1, expected_num_units):
             self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
 
-        # check that there is a mismatch and what happens
-        # after emitting the relation changed event
+        # check that there is a match
         self.assertEqual(expected_num_es_nodes, self.harness.charm.num_es_nodes)
         self.assertEqual(expected_num_units, self.harness.charm.num_hosts)
 
@@ -227,13 +224,12 @@ class TestCharm(unittest.TestCase):
         mock_es_nodes.return_value = expected_num_es_nodes
         expected_num_units = 3
 
-        # add a different number of units than number of es_nodes
+        # add same number of units as number of es_nodes
         rel_id = self.harness.add_relation('elasticsearch', 'elasticsearch')
         for i in range(1, expected_num_units):
             self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
 
-        # check that there is a mismatch and what happens
-        # after emitting the relation changed event
+        # check that there is a match
         self.assertEqual(expected_num_es_nodes, self.harness.charm.num_es_nodes)
         self.assertEqual(expected_num_units, self.harness.charm.num_hosts)
 
