@@ -127,7 +127,7 @@ class ElasticsearchOperatorCharm(CharmBase):
         # only configure dynamic settings if all nodes have been
         # recognized by the ES cluster and if the current unit is the leader
         if self.num_hosts == 1:
-            self.unit.status = ActiveStatus('Elasticsearch ready on single node')
+            self.unit.status = ActiveStatus()
         elif self.num_hosts != self.num_es_nodes:
             self.unit.status = MaintenanceStatus('Waiting for nodes to join ES cluster')
         else:
