@@ -37,16 +37,10 @@ class ElasticsearchOperatorCharm(CharmBase):
 
         self.framework.observe(self.on.config_changed, self._on_config_changed)
         self.framework.observe(self.on.stop, self._on_stop)
+        self.framework.observe(self.on.update_status, self._on_update_status)
         self.framework.observe(
             self.on[PEER].relation_joined,
             self._on_elasticsearch_unit_joined
-        )
-
-        # trigger _on_elasticsearch_relation_changed on both
-        # update_status and the normal peer relation changed
-        self.framework.observe(
-            self.on.update_status,
-            self._on_elasticsearch_relation_changed
         )
         self.framework.observe(
             self.on[PEER].relation_changed,
@@ -81,6 +75,32 @@ class ElasticsearchOperatorCharm(CharmBase):
             return 0
 
     @property
+    def current_minimum_master_nodes(self) -> int:
+        """The current value of the discovery.zen.minimum_master_nodes cluster setting
+
+        Default to 1 if we cannot get the value.
+        """
+        # attempt to get the settings of the cluster via the python module
+        es = self._get_es_client()
+        try:
+            settings = es.cluster.get_settings()
+        except RequestError:
+            return 1
+
+        # attempt to get the minimum_master_node setting from the nested dictionary
+        try:
+            return int(settings['persistent']['discovery']['zen']['minimum_master_nodes'])
+        except KeyError:
+            logger.warning('minimum_master_nodes not found in cluster settings')
+            return 1
+
+    @property
+    def ideal_minimum_master_nodes(self):
+        """Returns the minimum master nodes setting based on total number of nodes
+        """
+        return 1 if self.num_hosts <= 2 else self.num_hosts // 2 + 1
+
+    @property
     def ingress_address(self) -> str:
         """The ingress-address of the Elasticsearch cluster
         """
@@ -90,6 +110,12 @@ class ElasticsearchOperatorCharm(CharmBase):
         """Set a new Juju pod specification
         """
         self._configure_pod()
+
+    def _on_update_status(self, _):
+        """Update status event to take care of various cluster health checks
+        """
+        # check to see if we need to update the dynamic settings
+        self._configure_dynamic_settings()
 
     def _on_stop(self, _):
         """Mark this unit as inactive
@@ -124,16 +150,8 @@ class ElasticsearchOperatorCharm(CharmBase):
         if len(self._stored.nodes) < SEED_SIZE:
             self._configure_pod()
 
-        # only configure dynamic settings if all nodes have been
-        # recognized by the ES cluster and if the current unit is the leader
-        if self.num_hosts == 1:
-            self.unit.status = ActiveStatus()
-        elif self.num_hosts != self.num_es_nodes:
-            self.unit.status = MaintenanceStatus('Waiting for nodes to join ES cluster')
-        else:
-            logger.info('Configuring dynamic settings from '
-                        '_on_elasticsearch_relation_changed')
-            self._configure_dynamic_settings()
+        # attempt to configure dynamic settings of the cluster
+        self._configure_dynamic_settings()
 
     def _on_datastore_relation_changed(self, event):
         """This event handler only needs to pass the port to the remote unit
@@ -144,21 +162,25 @@ class ElasticsearchOperatorCharm(CharmBase):
         if self.unit.is_leader():
             event.relation.data[self.unit]['port'] = str(self.model.config['http-port'])
 
-    def _min_master_nodes(self):
-        """Returns the minimum master nodes setting based on total number of nodes
-        """
-        return 1 if self.num_hosts <= 2 else self.num_hosts // 2 + 1
-
     def _build_dynamic_settings_payload(self):
-        """Construct payload defining the dynamic cluster configuration settings
+        """Construct payload of the cluster configuration settings that need updating
         """
         dynamic_config = {
-            'persistent': {
-                'discovery.zen.minimum_master_nodes': self._min_master_nodes(),
-            },
+            'persistent': {},
+            'transient': {},
         }
 
-        return dynamic_config
+        # determine whether minimum_master_nodes setting needs to be updated
+        if self.ideal_minimum_master_nodes != self.current_minimum_master_nodes:
+            dynamic_config['persistent'].update({
+                'discovery.zen.minimum_master_nodes': self.ideal_minimum_master_nodes
+            })
+
+        # check whether there have been any new settings that need changing
+        if not dynamic_config['persistent'] and not dynamic_config['transient']:
+            return None
+        else:
+            return dynamic_config
 
     def _get_es_client(self) -> Elasticsearch():
         """Return an instance of the Elasticsearch Python client
@@ -180,17 +202,25 @@ class ElasticsearchOperatorCharm(CharmBase):
     def _configure_dynamic_settings(self):
         """Use ES API to create dynamic config changes without pod resets
 
-        Handlers calling this method must check the flag waiting_for_nodes
+        A dynamic setting update cannot (and will not) take place if the number of units
+        recognized by Juju does not match the number of nodes recognized by Elasticsearch
         """
-        if not self.unit.is_leader():
+        if self.num_hosts != self.num_es_nodes:
+            self.unit.status = MaintenanceStatus('Waiting for nodes to join ES cluster')
+            return
+        elif not self.unit.is_leader():
             self.unit.status = ActiveStatus()
             return
 
         cluster_settings = self._build_dynamic_settings_payload()
-        es = self._get_es_client()
+        if cluster_settings is None:
+            self.unit.status = ActiveStatus()
+            return
 
         # attempt to make cluster settings changes
+        es = self._get_es_client()
         try:
+            logger.info('Attempting to configure dynamic settings.')
             es.cluster.put_settings(body=cluster_settings)
             self.unit.status = ActiveStatus()
         except RequestError:
