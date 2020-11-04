@@ -6,6 +6,7 @@ import unittest
 import yaml
 
 from unittest import mock
+import elasticsearch  # noqa
 
 import charm
 from ops.model import ActiveStatus, MaintenanceStatus
@@ -24,6 +25,23 @@ class TestCharm(unittest.TestCase):
         self.harness = Harness(ElasticsearchOperatorCharm)
         self.addCleanup(self.harness.cleanup)
         self.harness.begin()
+
+        # patch definitions
+        self.mock_es_client = mock.patch('charm.ElasticsearchOperatorCharm._get_es_client')
+        self.mock_es = mock.patch('elasticsearch.Elasticsearch')
+        self.mock_current_mmn = \
+            mock.patch('charm.ElasticsearchOperatorCharm.current_minimum_master_nodes',
+                       new_callable=mock.PropertyMock)
+
+        # start patches
+        self.mock_es_client.start()
+        self.mock_es.start()
+        self.mock_current_mmn.start()
+
+        # cleanup patches
+        self.addCleanup(self.mock_es_client.stop)
+        self.addCleanup(self.mock_es.stop)
+        self.addCleanup(self.mock_current_mmn.stop)
 
     def test_cluster_name_can_be_changed(self):
         self.harness.set_leader(True)
@@ -91,7 +109,7 @@ class TestCharm(unittest.TestCase):
             with self.subTest():
                 for i in range(1, num_nodes):
                     self.harness.add_relation_unit(rel_id, 'elasticsearch-operator/{}'.format(i))
-                actual_mmn = self.harness.charm._min_master_nodes()
+                actual_mmn = self.harness.charm.ideal_minimum_master_nodes
                 self.assertEqual(expected_mmn, actual_mmn)
 
     def test_dynamic_settings_payload_has_correct_minimum_master_nodes(self):
@@ -122,7 +140,7 @@ class TestCharm(unittest.TestCase):
         self.harness.charm.on.update_status.emit()
         self.assertEqual(
             self.harness.charm.unit.status,
-            ActiveStatus('Elasticsearch ready on single node')
+            ActiveStatus()
         )
 
     @mock.patch('charm.ElasticsearchOperatorCharm.num_es_nodes', new_callable=mock.PropertyMock)
@@ -178,9 +196,8 @@ class TestCharm(unittest.TestCase):
             MaintenanceStatus('Waiting for nodes to join ES cluster')
         )
 
-    @mock.patch('charm.ElasticsearchOperatorCharm._configure_dynamic_settings')
     @mock.patch('charm.ElasticsearchOperatorCharm.num_es_nodes', new_callable=mock.PropertyMock)
-    def test_relation_changed_with_node_and_unit_match(self, mock_es_nodes, _):
+    def test_relation_changed_with_node_and_unit_match(self, mock_es_nodes):
         self.harness.set_leader(True)
         seed_config = MINIMAL_CONFIG.copy()
         self.harness.update_config(seed_config)
@@ -203,9 +220,7 @@ class TestCharm(unittest.TestCase):
         with self.assertLogs(level='INFO') as logger:
             self.harness.charm.on.elasticsearch_relation_changed.emit(rel)
             # check the logs
-            expected_logs = [
-                'INFO:charm:Configuring dynamic settings from _on_elasticsearch_relation_changed'
-            ]
+            expected_logs = ['INFO:charm:Attempting to configure dynamic settings.']
             self.assertEqual(sorted(logger.output), expected_logs)
             # check the status
             self.assertEqual(
@@ -213,9 +228,8 @@ class TestCharm(unittest.TestCase):
                 ActiveStatus()
             )
 
-    @mock.patch('charm.ElasticsearchOperatorCharm._configure_dynamic_settings')
     @mock.patch('charm.ElasticsearchOperatorCharm.num_es_nodes', new_callable=mock.PropertyMock)
-    def test_relation_changed_with_node_and_unit_match_via_update_status(self, mock_es_nodes, _):
+    def test_relation_changed_with_node_and_unit_match_via_update_status(self, mock_es_nodes):
         self.harness.set_leader(True)
         seed_config = MINIMAL_CONFIG.copy()
         self.harness.update_config(seed_config)
@@ -236,10 +250,8 @@ class TestCharm(unittest.TestCase):
         # check that the proper status has been set and that the logs are correct
         with self.assertLogs(level='INFO') as logger:
             self.harness.charm.on.update_status.emit()
-            # check the logs
-            expected_logs = [
-                'INFO:charm:Configuring dynamic settings from _on_elasticsearch_relation_changed'
-            ]
+            # check the logs (there will be two calls to _configure_dynamic_settings
+            expected_logs = ['INFO:charm:Attempting to configure dynamic settings.'] * 2
             self.assertEqual(sorted(logger.output), expected_logs)
             # check the status
             self.assertEqual(
