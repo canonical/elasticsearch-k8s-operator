@@ -160,7 +160,7 @@ class ElasticsearchOperatorCharm(CharmBase):
         of the Elasticsearch cluster.
         """
         if self.unit.is_leader():
-            event.relation.data[self.unit]['port'] = str(self.model.config['http-port'])
+            event.relation.data[self.unit]['port'] = str(self.model.config['port'])
 
     def _build_dynamic_settings_payload(self):
         """Construct payload of the cluster configuration settings that need updating
@@ -192,7 +192,7 @@ class ElasticsearchOperatorCharm(CharmBase):
         # to access the application ingress-address and cannot create an ES Python client
         host = '{}:{}'.format(
             self.ingress_address,
-            self.model.config['http-port']
+            self.model.config['port']
         )
 
         # TODO: if credentials are added to the config options, be sure to
@@ -306,7 +306,7 @@ class ElasticsearchOperatorCharm(CharmBase):
                     'imagePath': charm_config['elasticsearch-image-path'],
                 },
                 'ports': [{
-                    'containerPort': charm_config['http-port'],
+                    'containerPort': charm_config['port'],
                     'protocol': 'TCP'
                 }],
                 'envConfig': {
@@ -337,7 +337,7 @@ class ElasticsearchOperatorCharm(CharmBase):
                     'livenessProbe': {
                         'httpGet': {
                             'path': '/_cat/health?v',
-                            'port': charm_config['http-port']
+                            'port': charm_config['port']
                         },
                         'initialDelaySeconds': 20,
                         'timeoutSeconds': 20,
@@ -345,7 +345,7 @@ class ElasticsearchOperatorCharm(CharmBase):
                     'readinessProbe': {
                         'httpGet': {
                             'path': '/_cat/health?v',
-                            'port': charm_config['http-port']
+                            'port': charm_config['port']
                         },
                         'initialDelaySeconds': 10,
                         'timeoutSeconds': 10,
