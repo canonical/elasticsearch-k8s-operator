@@ -9,11 +9,9 @@ using [Elasticsearch](https://www.elastic.co/).
 Increase the maximum number of virtual memory areas on your host
 system. On a Linux system this can be done using the command line
 
-    sysctl -w vm.max_map_count=262144
+    sudo sysctl -w vm.max_map_count=262144
 
 For a more permanent change edit `/etc/sysctl.conf`.
-
-> Note: the above command will have to be run as root.
 
 ## Install Dependencies and Build
 
