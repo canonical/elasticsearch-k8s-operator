@@ -13,6 +13,8 @@ system. On a Linux system this can be done using the command line
 
 For a more permanent change edit `/etc/sysctl.conf`.
 
+> Note: the above command will have to be run as root.
+
 ## Install Dependencies and Build
 
 To build the charm, first install `charmcraft`,  `juju` and `microk8s`
@@ -33,7 +35,7 @@ To scale up:
 
     juju add-units -n 2 elasticsearch
 
-> NOTE: When the total number of nodes in the cluster is 2, split brain is possible. If there are currently two nodes, be sure to use `juju add-units` to scale up to a functional HA cluster.
+> Note: When the total number of nodes in the cluster is 2, split brain is possible. If there are currently two nodes, be sure to use `juju add-units` to scale up to a functional HA cluster.
 
 To check the status of the cluster:
 
