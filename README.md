@@ -31,9 +31,9 @@ Then in this git repository run the command
 
 To scale up:
 
-    juju add-units -n 2 elasticsearch
+    juju add-unit -n 2 elasticsearch
 
-> Note: When the total number of nodes in the cluster is 2, split brain is possible. If there are currently two nodes, be sure to use `juju add-units` to scale up to a functional HA cluster.
+> Note: When the total number of nodes in the cluster is 2, split brain is possible. If there are currently two nodes, be sure to use `juju add-unit` to scale up to a functional HA cluster. For more information about how Elasticsearch handles quorum and the effects of split brain, [take a look at the Elasticsearch docs](https://www.elastic.co/guide/en/elasticsearch/reference/7.x/modules-discovery-quorums.html).
 
 To check the status of the cluster:
 
