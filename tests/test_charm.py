@@ -251,7 +251,7 @@ class TestCharm(unittest.TestCase):
         with self.assertLogs(level='INFO') as logger:
             self.harness.charm.on.update_status.emit()
             # check the logs (there will be two calls to _configure_dynamic_settings
-            expected_logs = ['INFO:charm:Attempting to configure dynamic settings.'] * 2
+            expected_logs = ['INFO:charm:Attempting to configure dynamic settings.']
             self.assertEqual(sorted(logger.output), expected_logs)
             # check the status
             self.assertEqual(
@@ -263,7 +263,7 @@ class TestCharm(unittest.TestCase):
 def config_file(pod_spec, file):
     # get elasticsearch container from pod spec
     containers = pod_spec['containers']
-    elspod = next(filter(lambda obj: obj.get('name') == 'elasticsearch-operator',
+    elspod = next(filter(lambda obj: obj.get('name') == 'elasticsearch',
                          containers), None)
     # get mounted configuration volume from container spec
     elsvolumes = elspod['volumeConfig']
